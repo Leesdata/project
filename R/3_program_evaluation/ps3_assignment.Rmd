@@ -1,0 +1,384 @@
+---
+title: '[PPHA34600] Probelm Evaluation PS3'
+author: "Lee Kyung Ko"
+date: "2022-11-03"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message = FALSE}
+#setwd("C:/Users/LEE KO/Desktop/Program Eval/PS/PS3")
+
+library(tidyverse)
+library(dplyr)
+library(haven)
+library(corrplot)
+library(AER)
+library(stargazer)
+library(knitr)
+library(estimatr)
+library(Rcpp)
+library(broom)
+library(tidyr)
+
+#Loading data and merging 
+
+data <- read_dta("almond_etal_2008.dta")
+```
+
+
+### Q1.
+Descriptive statistics of birth weight in the sample. What is the mean, standard deviation, minimum, and maximum?
+
+**Answer**
+
+* mean: 1511.6  
+
+* standard deviation: 89.0 
+
+* minimum: 1350.0 
+
+* maximum: 1650.0 
+
+```{r}
+
+bweight_col <- data %>% select(bweight)
+
+#multiple function to one column
+#source: https://www.projectpro.io/recipes/apply-multiple-functions-on-list-r-one-go
+multiple_function <- function(x){
+  c(mean = mean(x), sd = sd(x), min = min(x), max= max(x))
+}
+
+descr_stat <- bweight_col %>% lapply(multiple_function)
+
+print(descr_stat)
+
+```
+
+### Q2.
+Plot one year and 28-day mortality rates against our running variable, birth weight. To do so, make bins of one ounce (28.35 grams) around the 1500 grams threshold and get the mean mortality rate in each bin. Make a separate graph for each outcome. Describe the relationship
+
+```{r warning=F, fig.width = 4, fig.height = 4}
+bin <- 28.35
+
+#Cut function source
+#https://statisticsglobe.com/group-data-frame-rows-range-r
+#source: not scientifica notation: https://stackoverflow.com/questions/15497694/cut-function-in-r-labeling-without-scientific-notations-for-use-in-ggplot2
+data_bin <- data %>% 
+  mutate(bin_one_ounce = cut(bweight, seq(1500-6*bin, 1500+6*bin, bin), right=FALSE, dig.lab = 10))
+   
+
+
+data_bin_mean_mortality <- data_bin %>%
+  group_by(bin_one_ounce) %>%
+  summarise(obs_count=n(),
+            mortality_one_year = mean(agedth5), 
+         mortality_28 = mean(agedth4))
+
+
+#extract number from interval
+#https://stackoverflow.com/questions/50669853/extract-value-from-an-interval-from-cut
+#extract numbers from the interval to have integer x-scale
+data_bin_mean_mortality <- data_bin_mean_mortality %>%
+   mutate(bin_min= lapply(str_extract_all(bin_one_ounce, "-?[0-9.]+"), function(x) min(as.numeric(x))),
+          bin_max =lapply(str_extract_all(bin_one_ounce, "-?[0-9.]+"), function(x) max(as.numeric(x))))
+          
+#apply function to multiple columns
+#https://stackoverflow.com/questions/22772279/converting-multiple-
+#columns-from-character-to-numeric-format-in-r
+cols_name <- c("bin_min", "bin_max")
+
+data_bin_mean_mortality[cols_name] <- lapply(data_bin_mean_mortality[cols_name], as.numeric)
+
+data_bin_mean_mortality <- data_bin_mean_mortality %>% 
+  mutate(bin_center = (bin_min + bin_max)/2)
+
+
+mortality_by_bin_one_year <- data_bin_mean_mortality %>%
+  ggplot(aes(x=bin_min, y=mortality_one_year)) +
+  geom_point() +
+  scale_x_continuous(breaks=seq(1350, 1650, 50)) +
+  labs(x="Birth Weight(g)", y="Mortality", title="One-year mortality")
+
+
+mortality_by_bin_28_day <- data_bin_mean_mortality %>%
+  ggplot(aes(x=bin_min, y=mortality_28)) +
+  geom_point() +
+  scale_x_continuous(breaks=seq(1350, 1650, 50)) +
+  labs(x="Birth Weight(g)", y="Mortality", title="28-day mortality")
+
+mortality_by_bin_one_year
+mortality_by_bin_28_day
+
+data_bin_mean_mortality %>%
+  select(bin_one_ounce, obs_count)
+
+```
+
+**Answer**
+For both one year and 28-day mortality rates, mortality rate generally decreases as birth weight increases. However, in the bin that includes 1500g birth weight [1500,1528.35), mortality rate shows an increase thus suggesting a discontinuity at the VLBW threshold. A deviation from the general decrease is also observed in the bin right below 1600 grams. The shape of the plot for the one-year and 28-day mortality rate looks similar in general. The more observations are included in each bin, more bias and less variance is expected for mean estimates.
+
+To note, it seems that the number of observations in each bin are generally similar except for the bin with the smallest birth weight value. The group shows discontinuous lower mortality rate, but it might needs to be considered separately from the general sample population with the very low birth weight.
+
+
+
+
+### Q3.
+A key assumption for an RDD to provide a causal estimate is that individuals are not able to sort according to the running variable, i.e., they should not be able to manipulate its value. Discuss in your own words whether this is a reasonable assumption in this case.
+
+**Answer**
+* Yes, it is a reasonable assumption. Parents and babies are unlikely and hardly able to know and try to manipulate the weight and manipulate it to exceed or fall short of the VLBW threshold. 
+
+
+
+### Q4.
+Now plot background covariates including mom_age, mom_ed1, gest, nprenatal, yob against birth weight
+
+
+```{r}
+#similarly repeat the previous steps, but in more systematic way
+data_bin_one_ounce <- data_bin %>%
+   mutate(bin_min = lapply(str_extract_all(bin_one_ounce, "-?[0-9.]+"), function(x) min(as.numeric(x))),
+          bin_max =lapply(str_extract_all(bin_one_ounce, "-?[0-9.]+"), function(x) max(as.numeric(x))))
+  
+  
+cols_name <- c("bin_min", "bin_max")
+
+data_bin_one_ounce[cols_name] <- lapply(data_bin_one_ounce[cols_name], as.numeric)
+
+
+#plot x-axis: 
+data_bin_covariates <- data_bin_one_ounce %>%
+    group_by(bin_min) %>%
+    summarise(
+            obs_count=n(),
+            mortality_one_year = mean(agedth5), 
+            mortality_28 = mean(agedth4),
+            mom_age_mean = mean(mom_age),
+            mom_less_hs = mean(mom_ed1),
+            mom_gest_age = mean(gest, na.rm=T),
+            prenatal_num = mean(nprenatal, na.rm=T),
+            year_of_birth_mean = mean(yob))
+
+
+data_bin_covariates
+
+##GGPLOT for each COLUMN
+#Source: drawing multiple plots for each column
+#https://stackoverflow.com/questions/58818300/ggplot-for-each-column-in-a-data
+data_bin_covariates %>%
+  select(-c(obs_count, mortality_one_year, mortality_28)) %>%
+  tidyr::gather(variable, value, -bin_min) %>%
+  ggplot(aes(x = bin_min, y = value)) +
+  geom_point(size = 0.5) +
+  geom_vline(xintercept = 1500, color="red")+
+  facet_wrap(~ variable, scales = "free_y", nrow=2) +
+  labs(title = "Plotting Background Covariates")
+
+
+
+```
+
+**Answer**
+
+Yes, plots seem to be smooth around the threshold of 1500. Although it seems that they are not on perfectly linear lines, the plots show smoothness considering the scale on the y-axis. Thus at least regarding the observable variables plotted against birth weight, babies have similar background characteristics.
+
+(Note) Here I set the x-axis of each bin to the smallest number in each interval.As in (2), the data in the interval with the smallest birth weight deviates from general trend. It is understandable, as those babies in the lowest recorded birth weight might present especially different health conditions and relevant factors.
+
+
+
+### Q5.
+Now formalize the evidence on smoothness of the covariates by estimating regressions
+
+```{r warning = F}
+#make columns that match the regression terms
+data_for_reg <- data %>%
+  mutate(vlbw_dummy=ifelse(bweight<1500, 1, 0),
+         bweight_centralized = bweight - 1500,
+         under_vlbw_bweight = vlbw_dummy * bweight_centralized,
+         over_vlbw_bweight = (1-vlbw_dummy) * bweight_centralized
+         )
+
+#limit sample to above/below the threshold by caliper
+caliper_sample <- function(caliper, df){
+ df %>%
+  filter(bweight>=1500-caliper & bweight <=1500+caliper)
+  }
+
+data_caliper_85 <- caliper_sample(85, data_for_reg)
+
+
+
+# Regression variables
+covariates<-c("mom_age", "mom_ed1", "gest", "nprenatal", "yob")
+
+#saved models to reg
+regs <- sapply(covariates, function(x)
+  lm(as.formula(paste0(x, " ~ vlbw_dummy + over_vlbw_bweight+ under_vlbw_bweight")), data= data_caliper_85))
+
+output <- lapply(regs, function(x) summary(x)$coefficient) 
+
+#Making stargazer result fit to the page/screen
+#https://towardsdatascience.com/getting-familiar-with-rmarkdown-stargazer-3853831a3918
+stargazer(regs[1:3], type = "text", column.labels = c("mom's age", "mom's edu less than HS", "gestational age"), no.space = TRUE, column.sep.width = "1pt", font.size = "small", header = FALSE)
+
+#just to present separately 
+stargazer(regs[4:5], type = "text", column.labels = c("prenatal care vist #", "year of birth"), single.row = TRUE, no.space = TRUE, column.sep.width = "1pt", font.size = "small", header = FALSE)
+
+#Another form: but name not showing
+#stargazer(output, object.names=TRUE, model.names = TRUE, type="text")
+```
+
+**Answer**
+
+The coefficient for VLBW (alpha 1) needs to be zero to show continuity around the threshold. The printed estimates are for the covariates ("mom_age", "mom_ed1", "gest", "nprenatal", "yob") respectively. When taking a look at p-value, mom_age (p_value 0.0001), gestational age(p_value 0.00003), and year of birth (p_value 0) are significantly different from zero. These are evidence of discontinuities around the threshold. If not controlled, these covariates will affect RDD estimates.
+
+Looking at each estimate, mother's age (estimate: 0.241) and year of birth (0.59) seems to have positive correlation and it means that RDD estimate could be overestimated if these two variables are not controlled. Gestational age (-0.128) has negative correlation and it means that an RDD estimate could be underestimated if not controlled of this variable.
+
+
+
+### Q6. 
+Get an estimate of the size of discontinuity in one year & 28-day mortality, using a caliper of 85 grams. Interpret the coefficients.
+
+```{r warning = F}
+#28-day
+OLS_no_control_28_day <- lm(agedth4 ~ vlbw_dummy + under_vlbw_bweight + over_vlbw_bweight , data= data_caliper_85)
+
+#summary(OLS_no_control_28_day)
+
+#one-year
+OLS_no_control_one_year<- lm(agedth5 ~ vlbw_dummy + under_vlbw_bweight + over_vlbw_bweight , data= data_caliper_85)
+
+#summary(OLS_no_control_28_day)
+
+stargazer(OLS_no_control_28_day, OLS_no_control_one_year, type="text", column.labels = c("28-day mortality", "one-year mortality"))
+
+```
+
+**Answer**
+
+*For 28-day mortality rate,* a1 is approximately -0.009, a2 is approximately  -0.0001, and a3 is approximately -0.0002. That all coefficients being negative means negative relationship between the birth weight and 28-day mortality within a caliper of 85 grams. 
+
+a1 indicates the effect of treatment at the threshold 1500grams. That is, the medical treatment (expense) that starts at the birth weight threshold of 1500 grams (treatment effect) is relevant with approximately 0.9 percentage point of decrease in 28-day mortality rate. a2 indicates how birth weight is connected with 28-day mortality rate when a newborn weighs less than 1500 grams (one gram of birth weight increase is associated with 0.01 percentage point decrease in 28-day mortality rate). a3 indicates the relationship between the birth weight and the 28-day mortality weight when a newborn weights more than 1500 grams (one gram birth weight increases is associated with 0.02 percentage point decrease in the rate) The negative connection is more strong (slope is steeper) above the threshold.
+
+*Similarly for one-year mortality rate,*
+there is approximately 1 percentage point decrease in mortality rate at the birth weight threshold of 1500 grams. Under the threshold, one gram increase in birth weight is associated with 0.01 percentage point mortality rate decrease and similarly 0.02 percentage point over the threshold. The negative relationship is more strong (slope steeper) over the threshold likewise. 
+
+
+### Q7.
+Add covariates to the model in 6. Compare with the estimates in the previuos question and explain the difference.
+
+```{r warning = F}
+#exclude rows those missing values in control variables
+#mom_ed4, gest_skw4, nprenatal_4
+data_caliper_85_no_missing <- data_caliper_85 %>%
+  filter(mom_ed5 != 1 & gest_wks4 != 1 & nprenatal_4 !=1)
+
+
+#Didn't include last categories of dummies as we need include (n-1) dummies and one cateogy will be regarded as a default
+#mom_ed1, gest_wks1, nprenatal_1
+#and regard year of birth (yob)  and mom_race as factors
+#source: https://bookdown.org/carillitony/bailey/chp6.html
+OLS_control_85_28_day <- lm(agedth4 ~ vlbw_dummy + under_vlbw_bweight + over_vlbw_bweight + 
+                    mom_age + mom_ed2 + mom_ed3 + mom_ed4 + as.factor(mom_race) + as.factor(yob) + gest_wks2 + gest_wks3 + nprenatal_2 +
+                    nprenatal_3 , data= data_caliper_85_no_missing)
+
+OLS_control_85_one_year <- lm(agedth5 ~ vlbw_dummy + under_vlbw_bweight + over_vlbw_bweight + 
+                    mom_age + mom_ed2 + mom_ed3 + mom_ed4 + as.factor(mom_race) + as.factor(yob) + gest_wks2 + gest_wks3 + nprenatal_2 +
+                    nprenatal_3 , data= data_caliper_85_no_missing)
+
+stargazer(OLS_control_85_28_day, OLS_control_85_one_year, type="text", column.labels = c("28-day mortality", "one-year mortality"))
+
+```
+
+**Answer**
+
+The estimates are all negative as expected (first three rows). The estimates didn't change significantly in general but the size of significance did changed at the threshold. The estimates with controls are identical for 28-day and one-year data. 
+
+Comparing 28-day mortality rate, 
+
+* a1: -0.005 (before control: -0.009) -> the size of treatment effect becomes smaller after control
+
+* a2: -0.0001 (before control: -0.0001) -> the size of negative relationship below the threshold are identical
+
+* a3: -0.0001 (before control: -0.0002) -> the size of negative relationship becomes smaller, but not much.
+
+The difference in the estimates could be attributed to the significance of covariates. In other words, covariate variables have explanatory power thus controlling them affects estimates. Specifically, Mom's education, race, gestational age, prenatal care visit numbers are related with outcome variables by different size (although not all are significant). The most noticeable difference seems to be relevant to the year of birth. Especially when a baby is born in 2000s, it seems to have meaningfully lower (around 4 percent point) mortality rate compared to those born in 1983 (default group as constant).
+
+(Note) Reasoning for the ways I did filtering and adding controls: I filtered only to the observations without any missing values to mom's education, gestational age, and prenatal care visit numbers. This is because those observations with missing values (i.e., mom_ed1 = 1, gest_wks4 = 1, nprenatal_4 = 1) could not be considered as having common characteristics. It would be misleading to categorize different respondents in to one category (e.g. mom_ed5) and control for it (e.g. less than high school but missing education response vs more than college but missing education response)
+
+
+
+### Q8.
+Bandwidth sensitivity: Use model in 7 to assess the sensitivity of the esimates to the use of different calipers. Use calipers of 65 and 105 grams. Are the estimates any different to those in 7? what is the tradeoff when we increase/decrease caliper?
+
+```{r warning = F}
+data_caliper_65 <- caliper_sample(65, data_for_reg)
+
+data_caliper_65_no_missing <- data_caliper_65 %>%
+  filter(mom_ed5 != 1 & gest_wks4 != 1 & nprenatal_4 !=1)
+
+
+data_caliper_105 <- caliper_sample(105, data_for_reg)
+
+
+data_caliper_105_no_missing <- data_caliper_105 %>%
+  filter(mom_ed5 != 1 & gest_wks4 != 1 & nprenatal_4 !=1)
+
+
+OLS_control_65_28_day <- lm(agedth4 ~ vlbw_dummy + under_vlbw_bweight + over_vlbw_bweight + 
+                    mom_age + as.factor(mom_race)  + mom_ed2 + mom_ed3 + mom_ed4 + as.factor(yob) + gest_wks2 + gest_wks3 + nprenatal_2 +
+                    nprenatal_3 , data= data_caliper_65_no_missing)
+
+
+OLS_control_65_one_year <- lm(agedth5 ~ vlbw_dummy + under_vlbw_bweight + over_vlbw_bweight + 
+                    mom_age + as.factor(mom_race)  + mom_ed2 + mom_ed3 + mom_ed4 + as.factor(yob) + gest_wks2 + gest_wks3 + nprenatal_2 +
+                    nprenatal_3 , data= data_caliper_65_no_missing)
+
+
+
+OLS_control_105_28_day <- lm(agedth4 ~ vlbw_dummy + under_vlbw_bweight + over_vlbw_bweight + 
+                    mom_age + as.factor(mom_race)  + mom_ed2 + mom_ed3 + mom_ed4 + as.factor(yob) + gest_wks2 + gest_wks3 + nprenatal_2 +
+                    nprenatal_3 , data= data_caliper_105_no_missing)
+
+
+OLS_control_105_one_year <- lm(agedth5 ~ vlbw_dummy + under_vlbw_bweight + over_vlbw_bweight + 
+                    mom_age + as.factor(mom_race)  + mom_ed2 + mom_ed3 + mom_ed4 + as.factor(yob) + gest_wks2 + gest_wks3 + nprenatal_2 +
+                    nprenatal_3 , data= data_caliper_105_no_missing)
+
+#For 28-day, different calipers
+stargazer(OLS_control_65_28_day, OLS_control_105_28_day, OLS_control_85_28_day,
+          column.labels=c("caliper=65, 28-day", "caliper=105, 28-day", "caliper=85, 28-day"), type="text")
+
+#FOr one-year, different calipers
+stargazer(OLS_control_65_one_year, OLS_control_105_one_year, OLS_control_85_one_year,
+          column.labels=c("caliper=65, one-year", "caliper=105, one-year", "caliper=85, one-year"), type="text")
+
+```
+
+**Answer**
+
+Compared with the caliper of 85, the estimates are similar. The difference that originates from the  size of caliper is the difference in variance. The model with the biggest caliper has the smallest variance (noticeable from the second and third row of the above table). So when increasing the caliper, we can decrease the variance of each estimate. However, from the first row of the above table, we could also see that the size of the treatment effect may not be so accurate for the model with bigger caliper. While the models with caliper of 65 and 85 both present the effect size of -0.005, the model with the caliper of 105 solely has the result of -0.004. The differences support the trade off between bias and variance when choosing a caliper size. 
+
+The implication also applies to the one-year mortality estimates. While the variance of the estimates (row 1-3) is smaller for the model with a larger caliper, the model's treatment effect estimate is solely insignificant and different from other models.
+
+
+### Q9. 
+Synthesize your findings and what kind of supplementary info need to make a cost-benefit analysis of treatment received by newborns close to the very low birth weight threshold
+
+**Answer**
+
+Through the problem set, the main topic of focus was figuring out the relationship between mortality rate (representative of health outcome) and VLBW diagnosis which often times lead to special treatment with medical expenses. Around the threshold, those newborns classified as VLBW have lower mortality rate and it could be connected with the additional medical treatment that receive when diagnosed as VLBW.
+In order to do the cost-benefit analysis, I need to know the additional medical expenses incurred for the newborns under 1500 due to the special treatment. The economic value of the newborn's better health outcomes (i.e. 'benefits' from the treatment) also needs to be clarified. Additionally, if there are social costs and benefits from the special treatment to VLBW infants, they should also be considered.
+
+
+
+
+**EOD**
