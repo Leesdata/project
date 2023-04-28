@@ -1,4 +1,4 @@
-# Sample Codes From data courses
+# Sample Codes from data courses
 
 ### Master in Public Policy (MPP) & [Certificates in Data Analytics (STEM major)](https://harris.uchicago.edu/academics/design-your-path/certificates/certificate-data-analytics)
 **[Note]** Some data is not uploaded due to storage/data usage agreement issue. There are knitted Rmarkdown pdfs/PPT files that provide overview of the outputs when codes are run with data. Access to some team project outputs could be limited. 
